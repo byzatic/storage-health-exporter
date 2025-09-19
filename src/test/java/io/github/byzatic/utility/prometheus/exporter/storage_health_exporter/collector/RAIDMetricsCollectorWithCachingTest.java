@@ -80,7 +80,7 @@ public class RAIDMetricsCollectorWithCachingTest {
             logger.debug("First lines of exposition:\n{}", firstLines(body, 25));
 
             Pattern series = Pattern.compile(
-                    "^megaraid_current_pending_sectors\\{[^}]*disk_id=\"4\"[^}]*mount_point=\"/dev/bus/0\"[^}]*}\\s*(-?\\d+(?:\\.\\d+)?)$",
+                    "^current_pending_sectors\\{[^}]*disk_id=\"4\"[^}]*mount_point=\"/dev/bus/0\"[^}]*}\\s*(-?\\d+(?:\\.\\d+)?)$",
                     Pattern.MULTILINE
             );
             Matcher m = series.matcher(body);
@@ -93,7 +93,7 @@ public class RAIDMetricsCollectorWithCachingTest {
                 logger.debug("Match #{}: {}", count, matchedLine);
             }
 
-            logger.info("Found {} matching series for megaraid_current_pending_sectors (disk_id=4, /dev/bus/0)", count);
+            logger.info("Found {} matching series for current_pending_sectors (disk_id=4, /dev/bus/0)", count);
 
             if (count != 1) {
                 logger.warn("Expected exactly one series. Dumping full /metrics for troubleshooting:");
