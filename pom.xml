@@ -4,7 +4,7 @@
 
   <groupId>io.github.byzatic.utility.prometheus.exporter</groupId>
   <artifactId>storage-health-exporter</artifactId>
-  <version>0.0.1-SNAPSHOT</version>
+  <version>1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>storage-health-exporter</name>
