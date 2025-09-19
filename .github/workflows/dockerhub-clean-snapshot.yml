@@ -1,0 +1,59 @@
+name: "Docker Hub: prune stale *-SNAPSHOT tags"
+
+on:
+  schedule:
+    - cron: "23 4 * * *"   # ежедневно 04:23 UTC
+  workflow_dispatch: {}
+
+jobs:
+  prune-snapshot:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_NAMESPACE: byzatic
+      DOCKERHUB_REPO: storage-health-exporter
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      MAX_AGE_DAYS: 2
+
+    steps:
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Delete old *-SNAPSHOT tags
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(curl -fsSL -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r .token)
+
+          repo="https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}/tags"
+          next="${repo}/?page_size=100"
+
+          cutoff="$(date -u -d "${MAX_AGE_DAYS} days ago" +%s)"
+          deleted=0 total=0
+
+          while [[ -n "${next}" && "${next}" != "null" ]]; do
+            page=$(curl -fsSL -H "Authorization: JWT ${TOKEN}" "${next}")
+            next=$(echo "$page" | jq -r '.next')
+            echo "$page" | jq -c '.results[]' | while read -r tagInfo; do
+              tag=$(echo "$tagInfo" | jq -r '.name')
+              last_pushed=$(echo "$tagInfo" | jq -r '.last_pushed')
+              [[ -z "$tag" || -z "$last_pushed" ]] && continue
+
+              if [[ "$tag" == *-SNAPSHOT ]]; then
+                total=$((total+1))
+                pushed_ts=$(date -d "$last_pushed" +%s)
+                if (( pushed_ts < cutoff )); then
+                  echo "DROP: ${tag} -> last pushed $last_pushed (older than ${MAX_AGE_DAYS} days)"
+                  curl -fsSL -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                    "${repo}/${tag}/" && echo "Deleted ${tag}" && deleted=$((deleted+1))
+                else
+                  echo "KEEP: ${tag} -> last pushed $last_pushed"
+                fi
+              fi
+            done
+          done
+
+          echo "Checked SNAPSHOT tags: ${total}, deleted: ${deleted}"

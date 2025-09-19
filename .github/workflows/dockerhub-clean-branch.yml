@@ -1,0 +1,47 @@
+name: "Docker Hub: clean tags on branch delete"
+
+on:
+  delete:
+    branches:
+      - '**'
+
+jobs:
+  clean-branch:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_NAMESPACE: byzatic
+      DOCKERHUB_REPO: storage-health-exporter
+      BRANCH_NAME: ${{ github.event.ref }}
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout (empty, just to have git & jq)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Delete Docker Hub tag == branch name
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Deleting tag '${BRANCH_NAME}' in ${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO} (if exists)"
+
+          TOKEN=$(curl -fsSL -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r .token)
+
+          # Проверим, существует ли тег с именем ветки
+          FOUND=$(curl -fsSL -H "Authorization: JWT ${TOKEN}" \
+            "https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}/tags/${BRANCH_NAME}/" \
+            | jq -r '.name // empty' || true)
+
+          if [[ -n "$FOUND" ]]; then
+            curl -fsSL -X DELETE -H "Authorization: JWT ${TOKEN}" \
+              "https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}/tags/${BRANCH_NAME}/"
+            echo "Deleted tag: ${BRANCH_NAME}"
+          else
+            echo "Tag not found: ${BRANCH_NAME} (nothing to do)"
+          fi
