@@ -1,2 +1,2 @@
-# storage-health-exporter
-A Java exporter that exposes disk health metrics for Prometheus via smartmontools—covering standalone drives and hardware RAID (e.g., LSI MegaRAID)—packaged for easy Docker deployment.
+# Storage Health Exporter
+Docker Raid Metrics Prometheus Exporter is a Java-based exporter that collects and exposes disk health and performance metrics for Prometheus via smartmontools. It supports both standalone drives (S.M.A.R.T.) and hardware RAID arrays—including controllers like LSI MegaRAID—so you can track mixed environments with a single tool. Delivered as a Docker container, it integrates cleanly into Prometheus/Grafana stacks for monitoring and alerting.
