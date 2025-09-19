@@ -16,7 +16,7 @@ public class Configuration {
     private final static Logger logger = LoggerFactory.getLogger(App.class);
     public static final String APP_NAME = "storage-health-exporter";
 
-    public static final String APP_VERSION = "1.1";
+    public static final String APP_VERSION = "0.0.1";
 
     // Scheduler cron syntax.
     //

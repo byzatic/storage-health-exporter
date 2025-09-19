@@ -18,43 +18,43 @@ public class RAIDMetricsCollectorWithCaching implements RAIDMetricsCollectorInte
     private final Map<String, String[]> knownLabelsByKey = new ConcurrentHashMap<>();
 
     private static final Gauge reallocatedSectors = Gauge.builder()
-            .name("megaraid_reallocated_sectors")
+            .name("reallocated_sectors")
             .help("Reallocated sectors count per disk")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge powerOnHours = Gauge.builder()
-            .name("megaraid_power_on_hours")
+            .name("power_on_hours")
             .help("Power on hours per disk")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge temperatureCelsius = Gauge.builder()
-            .name("megaraid_temperature_celsius")
+            .name("temperature_celsius")
             .help("Disk temperature in Celsius")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge currentPendingSectors = Gauge.builder()
-            .name("megaraid_current_pending_sectors")
+            .name("current_pending_sectors")
             .help("Current pending sectors")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge offlineUncorrectable = Gauge.builder()
-            .name("megaraid_offline_uncorrectable")
+            .name("offline_uncorrectable")
             .help("Offline uncorrectable sectors")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge udmaCrcErrors = Gauge.builder()
-            .name("megaraid_udma_crc_errors")
+            .name("udma_crc_errors")
             .help("UDMA CRC error count")
             .labelNames("disk_id", "model", "serial", "mount_point")
             .register();
 
     private static final Gauge smartPassed = Gauge.builder()
-            .name("megaraid_smart_passed")
+            .name("smart_passed")
             .help("SMART overall health passed status (1=PASSED, 0=FAILED)")
             .labelNames("disk_id", "model", "serial", "device_name")
             .register();
