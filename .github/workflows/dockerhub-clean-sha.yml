@@ -1,0 +1,63 @@
+name: "Docker Hub: prune stale sha-* tags"
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # ежедневно 03:17 UTC
+  workflow_dispatch: {}
+
+jobs:
+  prune-sha:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_NAMESPACE: byzatic
+      DOCKERHUB_REPO: storage-health-exporter
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Fetch all refs
+        run: |
+          git remote -v
+          git fetch --prune origin "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
+
+      - name: Delete sha-* tags whose commits no longer exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(curl -fsSL -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" | jq -r .token)
+
+          repo="https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}/tags"
+          next="${repo}/?page_size=100"
+
+          deleted=0 total=0
+          while [[ -n "${next}" && "${next}" != "null" ]]; do
+            page=$(curl -fsSL -H "Authorization: JWT ${TOKEN}" "${next}")
+            next=$(echo "$page" | jq -r '.next')
+            echo "$page" | jq -r '.results[].name' | while read -r tag; do
+              [[ -z "$tag" ]] && continue
+              # интересуют только sha-<hex> (7..40 символов)
+              if [[ "$tag" =~ ^sha-([0-9a-f]{7,40})$ ]]; then
+                sha="${BASH_REMATCH[1]}"
+                total=$((total+1))
+                # существует ли этот коммит в текущем репо?
+                if git cat-file -e "${sha}^{commit}" 2>/dev/null; then
+                  echo "OK  : ${tag} -> commit exists"
+                else
+                  echo "DROP: ${tag} -> commit NOT found"
+                  curl -fsSL -X DELETE -H "Authorization: JWT ${TOKEN}" \
+                    "${repo}/${tag}/" && echo "Deleted ${tag}" && deleted=$((deleted+1))
+                fi
+              fi
+            done
+          done
+          echo "Checked sha-tags: ${total}, deleted: ${deleted}"

@@ -1,0 +1,30 @@
+# Игнорируем Maven временные файлы и директории
+target/
+*.log
+*.tmp
+
+# Игнорируем IDE файлы и конфигурации (IntelliJ IDEA, VS Code)
+.idea/
+.idea/**
+*.idea/
+*.vscode/
+*.iml
+
+# Игнорируем систему контроля версий
+.git/
+.gitignore
+
+# Игнорируем пользовательские файлы конфигурации
+*.env
+*.swp
+
+# Игнорируем файлы операционных систем
+.DS_Store
+Thumbs.db
+
+# Игнорируем некоторые файлы проекта
+.env
+.env.sample
+configuration/example.configuration.xml
+data/*
+logs/*

@@ -1,0 +1,97 @@
+name: "Docker Hub: prune orphaned feature-* tags"
+
+on:
+  schedule:
+    - cron: "23 3 * * *"      # ежедневно 03:23 UTC
+  workflow_dispatch: {}        # запуск вручную
+
+jobs:
+  prune-feature:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_NAMESPACE: byzatic
+      DOCKERHUB_REPO: storage-health-exporter
+      DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      PREFIX: feature-
+      PAGE_SIZE: "100"
+      DRY_RUN: "false"   # поставь "true" для пробного запуска без удаления
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq git
+
+      - name: Collect remote branches (origin)
+        run: |
+          set -euo pipefail
+          # Быстро, без checkout: только список веток на origin
+          git ls-remote --heads https://github.com/${{ github.repository }}.git \
+            | awk '{print $2}' | sed 's#^refs/heads/##' | sort -u > /tmp/remote_branches.txt
+          echo "Remote branches:"
+          cat /tmp/remote_branches.txt | sed 's/^/ - /' | head -n 20
+          echo "(...резали вывод...)"
+
+      - name: Prune orphaned feature-* tags in Docker Hub
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          login_resp=$(curl -sS -X POST "https://hub.docker.com/v2/users/login/" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}")
+          TOKEN=$(echo "$login_resp" | jq -r .token)
+          if [[ -z "${TOKEN}" || "${TOKEN}" == "null" ]]; then
+            echo "::error::Failed to login to Docker Hub"
+            echo "$login_resp"
+            exit 1
+          fi
+
+          repo_base="https://hub.docker.com/v2/repositories/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPO}/tags"
+          next="${repo_base}/?page_size=${PAGE_SIZE}"
+          total=0; candidates=0; deleted=0
+
+          # Для быстрого поиска: сделаем grep-список веток
+          mapfile -t BRANCHES < /tmp/remote_branches.txt
+
+          exists_branch () {
+            local name="$1"
+            # есть ли точное совпадение имени ветки
+            for b in "${BRANCHES[@]}"; do
+              if [[ "$b" == "$name" ]]; then return 0; fi
+            done
+            return 1
+          }
+
+          while [[ -n "${next}" && "${next}" != "null" ]]; do
+            page=$(curl -sS -H "Authorization: JWT ${TOKEN}" "${next}")
+            next=$(echo "$page" | jq -r '.next')
+            # отберём только feature-* теги
+            echo "$page" | jq -r '.results[].name' | while read -r tag; do
+              [[ -z "$tag" ]] && continue
+              total=$((total+1))
+              if [[ "$tag" == ${PREFIX}* ]]; then
+                candidates=$((candidates+1))
+                if exists_branch "$tag"; then
+                  echo "KEEP: ${tag} (branch exists)"
+                else
+                  echo "ORPHAN: ${tag} (no such branch)"
+                  if [[ "${DRY_RUN}" == "true" ]]; then
+                    echo "DRY-RUN: would delete ${tag}"
+                  else
+                    code=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+                      -H "Authorization: JWT ${TOKEN}" \
+                      "${repo_base}/${tag}/")
+                    if [[ "$code" == "204" || "$code" == "202" || "$code" == "200" ]]; then
+                      echo "Deleted ${tag}"
+                      deleted=$((deleted+1))
+                    else
+                      echo "::warning::Failed to delete ${tag} (HTTP ${code})"
+                    fi
+                  fi
+                fi
+              fi
+            done
+          done
+
+          echo "Tags scanned: ${total}, feature-* candidates: ${candidates}, deleted: ${deleted}"

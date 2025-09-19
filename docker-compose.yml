@@ -1,0 +1,31 @@
+version: '3.7'
+services:
+  raidmetrics-exporter:
+    image: byzatic/storage-health-exporter:latest
+    container_name: raidmetrics-exporter
+    privileged: true
+    environment:
+      - XMS=20m
+      - XMX=1024m
+    ports:
+      - "20222:8080"
+    volumes:
+      #- ${PWD}/configuration:/app/configuration
+      - ${PWD}/logs:/app/logs
+    logging:
+      driver: json-file
+      options:
+        max-file: "10"
+        max-size: "10m"
+    networks:
+      - raidmetrics-net
+
+networks:
+  raidmetrics-net:
+    name: raidmetrics-net
+    external: false
+
+
+
+
+

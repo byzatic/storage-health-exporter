@@ -1,0 +1,163 @@
+name: Build and Publish Docker Image
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: storage-health-exporter
+
+
+jobs:
+
+  debug:
+    if: |
+      (github.actor == 'byzatic' || github.actor == 'svyatvlasso') &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+
+    steps:
+      - run: echo "Actor is ${{ github.actor }}"
+
+
+  test:
+    runs-on: ubuntu-latest
+    if: |
+      (github.actor == 'byzatic' || github.actor == 'svyatvlasso') &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven
+
+      - name: Build and test with Maven
+        run: mvn clean verify --no-transfer-progress
+
+  build-and-push-buildah:
+    runs-on: ubuntu-latest
+    if: |
+      (github.actor == 'byzatic' || github.actor == 'svyatvlasso') &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+
+    container:
+      image: quay.io/buildah/stable:latest
+      options: --privileged
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Get short SHA and branch name
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            echo "branch_name=${GITHUB_HEAD_REF//\//-}" >> "$GITHUB_OUTPUT"
+          else
+            ref="${GITHUB_REF##refs/heads/}"
+            echo "branch_name=${ref//\//-}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved branch: ${ref:-$GITHUB_HEAD_REF}"
+
+      - name: Install xmllint
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v xmllint >/dev/null 2>&1; then
+            xmllint --version || true
+            exit 0
+          fi
+          if command -v microdnf >/dev/null 2>&1; then
+            microdnf -y install libxml2
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y install libxml2
+          else
+            apt-get update && apt-get install -y libxml2-utils
+          fi
+          xmllint --version
+
+      - name: Extract version from POM (XML-safe)
+        id: pom
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 1) Пытаемся взять <project><version>
+          V="$(xmllint --xpath 'string(/*[local-name()="project"]/*[local-name()="version"])' pom.xml 2>/dev/null || true)"
+          # 2) Если нет — берём <project><parent><version>
+          if [[ -z "$V" ]]; then
+            V="$(xmllint --xpath 'string(/*[local-name()="project"]/*[local-name()="parent"]/*[local-name()="version"])' pom.xml 2>/dev/null || true)"
+          fi
+          if [[ -z "$V" ]]; then
+            echo "Не удалось извлечь версию из pom.xml"; exit 1
+          fi
+          echo "pom_version=$V" >> "$GITHUB_OUTPUT"
+          echo "POM version: $V"
+
+      - name: "Guard: forbid SNAPSHOT on main"
+        if: steps.vars.outputs.branch_name == 'main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.pom.outputs.pom_version }}" == *-SNAPSHOT ]]; then
+            echo "ERROR: On 'main' but POM version is SNAPSHOT: ${{ steps.pom.outputs.pom_version }}"
+            exit 1
+          fi
+
+      - name: Login to DockerHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.DOCKERHUB_TOKEN }}" | buildah login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin docker.io
+
+      - name: Build image with required tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          buildah bud \
+            --tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.short_sha }} \
+            --tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.branch_name }} \
+            $( [[ "${{ steps.vars.outputs.branch_name }}" == "main" ]] && echo "--tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest" ) \
+            $( [[ "${{ steps.vars.outputs.branch_name }}" == "main" ]] && echo "--tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main" ) \
+            $( [[ "${{ steps.vars.outputs.branch_name }}" == "main" ]] && echo "--tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.pom.outputs.pom_version }}" ) \
+            $( [[ "${{ steps.pom.outputs.pom_version }}" == *-SNAPSHOT ]] && echo "--tag docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.pom.outputs.pom_version }}" ) \
+            --file Dockerfile .
+
+      - name: "Push image: sha, branch and version if SNAPSHOT"
+        shell: bash
+        run: |
+          set -euo pipefail
+          buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:sha-${{ steps.vars.outputs.short_sha }}
+          buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.branch_name }}
+          if [[ "${{ steps.pom.outputs.pom_version }}" == *-SNAPSHOT ]]; then
+            buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.pom.outputs.pom_version }}
+          fi
+
+      - name: "Push image: latest, main, and version"
+        if: steps.vars.outputs.branch_name == 'main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:main
+          buildah push docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.pom.outputs.pom_version }}
